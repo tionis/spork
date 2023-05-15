@@ -10,6 +10,15 @@
   []
   (os/open (if (= :windows (os/which)) "NUL" "/dev/null") :rw))
 
+(defn which-all [exe-name]
+  (->> (os/getenv "PATH")
+       (string/split ":")
+       (distinct)
+       (mapcat |(let [path (path/join $0 exe-name)]
+                  (if (os/stat path) path [])))))
+
+(defn which [exe-name] (first (which-all exe-name)))
+
 (defn exec
   "Execute command specified by args returning it's exit code"
   [& args]
@@ -30,6 +39,15 @@
      (:read out :all buf)
      (:wait proc))
    (string/trimr buf))
+
+(defn temp-dir
+  "returns the path to a temporary directory created by the os"
+  []
+  (if (= (os/type) :windows)
+    (if (which "mktemp")
+      (sh/exec-slurp "mktemp" "-d")
+      (exec-slurp "mktemp" "-d"))
+    (error "not implemented"))) # TODO check $TMP/$TEMP/$USERPROFILE and finally windows dir and create dir there etc. atomic?
 
 (defn exec-slurp-all
    `Read stdout and stderr of subprocess and return it trimmed in a struct with :err and :out containing the output as string.
