@@ -1,2 +1,0 @@
-{$ (import ./hi :as hi) $}
-{% (hi/render-dict args) %}

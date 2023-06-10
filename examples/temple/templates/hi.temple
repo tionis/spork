@@ -1,4 +1,0 @@
-{$ (defn myfn [x] (+ x x)) $}
-<html>
-  {{ (myfn (length (range (+ (args :a) (args :b))))) }}
-</html>

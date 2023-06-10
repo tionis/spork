@@ -83,3 +83,44 @@
     (if (= (categorize a) (categorize b))
       (diff-similar (type a) a b)
       (atom-diff a b))))
+
+(defn- diff-to-changes [ds &opt ops path]
+  (default ops @[])
+  (default path [])
+  (def category (categorize ds))
+  (case category
+    :sequence    (eachk key ds (diff-to-changes (ds key) ops [;path [category key]]))
+    :associative (eachk key ds (diff-to-changes (ds key) ops [;path [category key]]))
+    :atom (if ds (array/push ops [;path [:atom ds]])))
+  ops)
+
+(defn changeset/from-diff
+  "create changeset to transform a to b from the output of data/diff"
+  [diff-arr]
+  (def rm-ops (diff-to-changes (diff-arr 0)))
+  (def put-ops (diff-to-changes (diff-arr 1)))
+  # TODO deduplicate rm-ops
+  # TODO also merge datastructures that are deleted in full into one change
+  # TODO merge rm-ops with (:atom nil) into put-ops and return them
+  {:rm (freeze rm-ops)
+   :put (freeze put-ops)})
+
+(defn changeset/apply [ds changeset]
+  (def x (thaw ds))
+  (each op (ds :rm))
+  (each op (ds :rm))
+  x)
+
+(def a @[@[1 2 "arr-val"] 2 4 {1 2 4 [1 2 3]}])
+(def b @[@[1 2] 2 3 @{1 2 2 3}])
+(def diff-arr (diff a b))
+(def changeset (changeset/from-diff diff-arr))
+(def should {:put [[[:sequence 2] [:atom 3]]
+                   [[:sequence 3] [:associative 2] [:atom 3]]]
+             :rm [[[:sequence 0] [:sequence 2] [:atom "arr-val"]]
+                  [[:sequence 2] [:atom 4]]
+                  [[:sequence 3] [:associative 4] [:sequence 0] [:atom 1]]
+                  [[:sequence 3] [:associative 4] [:sequence 1] [:atom 2]]
+                  [[:sequence 3] [:associative 4] [:sequence 2] [:atom 3]]]})
+(assert (deep= should changeset))
+(assert (deep= (freeze b) (changeset/apply a changeset)))
