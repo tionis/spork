@@ -281,14 +281,12 @@
 (defn- emit-array-ctor
   [args]
   (var is-first true)
-  (emit-block-start)
+  (prin "{")
   (each x args
-    (if-not is-first (print ", "))
+    (if-not is-first (prin ", "))
     (set is-first false)
-    (emit-indent)
     (emit-expression x true))
-  (print)
-  (emit-block-end))
+  (prin "}"))
 
 (varfn emit-expression
   [form &opt noparen]
@@ -667,9 +665,9 @@
   (array/push param-names v)
   (array/push cparams [v (get type-alias-to-ctype (keyword T) '(* void))])
   (case (keyword T)
-    :value ~(def (,v Janet) (? (> argc ,n) (aref ,argv ,n) ,(wrap-v dflt)))
-    :any ~(def (,v Janet) (? (> argc ,n) (aref ,argv ,n) ,(wrap-v dflt)))
-    :Janet ~(def (,v Janet) (? (> argc ,n) (aref ,argv ,n) ,(wrap-v dflt)))
+    :value ~(def (,v Janet) (? (> argc n) (aref ,argv ,n) ,(wrap-v dflt)))
+    :any ~(def (,v Janet) (? (> argc n) (aref ,argv ,n) ,(wrap-v dflt)))
+    :Janet ~(def (,v Janet) (? (> argc n) (aref ,argv ,n) ,(wrap-v dflt)))
     :number ~(def (,v double) (janet_optnumber ,argv ,argc ,n ,dflt))
     :double ~(def (,v double) (janet_optnumber ,argv ,argc ,n ,dflt))
     :float ~(def (,v float) (janet_optnumber ,argv ,argc ,n ,dflt))
@@ -746,9 +744,10 @@
                  (eval (qq-wrap body)))
   # Generate wrapper for use in Janet
   (def cfun_name (mangle (string "_generated_cfunction_" mangledname)))
-  (print "\nJANET_FN(" cfun_name ",")
-  (print "        " (string/format "%j" (string signature)) ", ")
-  (print "        " (string/format "%j" (string docstring)) ")")
+  (prin
+    "\nJANET_FN(" cfun_name ", "
+    (string/format "%j" (string signature)) ", "
+    (string/format "%j" (string docstring)) ") ")
   (block
     ,(if (= min-arity max-arity)
       ~(janet_fixarity argc ,min-arity)
