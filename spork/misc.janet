@@ -6,6 +6,8 @@
 
 (import spork/rawterm)
 
+(def- eol (if (= :windows (os/which)) "\r\n" "\n"))
+
 (defn dedent
   ```
   Remove indentation after concatenating the arguments. Works by removing
@@ -26,7 +28,7 @@
                                 "\n" (string/replace indent "" x))]
       # Remove trailing newline to mimic long string newline omission.
       (if (= (chr "\n") (last y))
-        (slice y 0 -2)
+        (slice y 0 (dec (length y)))
         y))
     x))
 
@@ -86,7 +88,7 @@
   # build horizontal bars
   (def topbuf (or buf-into @""))
   (buffer/push topbuf "╭")
-  (def hbuf   @"│")
+  (def hbuf @"│")
   (def midbuf @"╞")
   (def botbuf @"╰")
   (each key colkeys
@@ -106,12 +108,12 @@
     (repeat after (buffer/push hbuf " "))
     (buffer/push hbuf "│"))
   (buffer/popn topbuf 3)
-  (buffer/popn midbuf 3) 
+  (buffer/popn midbuf 3)
   (buffer/popn botbuf 3) # 3 bytes, 1 char
-  (buffer/push topbuf "╮\n")
-  (buffer/push midbuf "╡\n")
-  (buffer/push botbuf "╯")
-  (buffer/push hbuf "\n")
+  (buffer/push topbuf (string "╮" eol))
+  (buffer/push midbuf (string "╡" eol))
+  (buffer/push botbuf (string "╯" eol))
+  (buffer/push hbuf eol)
 
   # build large buffer
   (buffer/push topbuf hbuf midbuf)
@@ -126,7 +128,7 @@
         (string/repeat " " (- width len))
         item
         "│"))
-    (buffer/push topbuf "\n"))
+    (buffer/push topbuf eol))
   (buffer/push topbuf botbuf)
   topbuf)
 
@@ -198,21 +200,21 @@
   "Trim the specified prefix of a string if it has one"
   [prefix str]
   (if (string/has-prefix? prefix str)
-    (slice str (length prefix) -1)
+    (slice str (length prefix))
     str))
 
 (defn trim-suffix
   "Trim the specified suffix of a string if it has one"
   [suffix str]
   (if (string/has-suffix? suffix str)
-    (slice str 0 (* -1 (+ 1 (length suffix))))
+    (slice str 0 (- (length str) (length suffix)))
     str))
 
 (defmacro log
   ```
   Print to a dynamic binding stream if that stream is set, otherwise do
-  nothing. Evaluate to nil.  
-  For example, `(log :err "value error: %V" my-value)` will print 
+  nothing. Evaluate to nil.
+  For example, `(log :err "value error: %V" my-value)` will print
   to `(dyn :err)` only if `(dyn :err)` has been set.
   ```
   [level & args]
@@ -226,11 +228,21 @@
   keys recursively.
   ```
   [f data]
-  (-> (seq [[k v] :pairs data]
-        [(f k) (if (dictionary? v) (map-keys f v) v)])
-      flatten
-      splice
-      table))
+  (def res @{})
+  (loop [[k v] :pairs data]
+    (put res (f k)
+         (if (dictionary? v)
+           (map-keys f v) v)))
+  res)
+
+(defn map-keys-flat
+  ```
+  Returns new table with function `f` applied to `data`'s
+  keys without recursing.
+  ```
+  [f data]
+  (tabseq [[k v] :pairs data]
+    (f k) v))
 
 (defn map-vals
   "Returns new table with function `f` applied to `data`'s values."
@@ -266,7 +278,7 @@
                'if cnd
                (tuple 'set res
                       (tuple (first ope) res
-                             ;(tuple/slice ope 1 -1)))))
+                             ;(tuple/slice ope 1)))))
            (partition 2 clauses))
        ,res)))
 
@@ -311,7 +323,7 @@
 (defmacro do-def
   ```
   Convenience macro for defining constant named `c` with value `d` before `body`
-  and returning it after evaluating `body`, that presumably modifies 
+  and returning it after evaluating `body`, that presumably modifies
   the `c` refered content. For example buffer, table or array.
   ```
   [c d & body]
@@ -455,6 +467,41 @@
     (buffer/push buf "-"))
   (string/reverse buf))
 
+(defmacro binary-search
+  ``Returns the index of `x` in a sorted array or tuple or the index of
+  the next item if `x` is not present. This is the correct insert index
+  for `x` within `arr`. If a `<?` comparator is given, the search uses
+  that to compare elements, otherwise uses `<`.``
+  [x arr &opt <?]
+  (default <? <)
+  (with-syms [start end mid]
+    ~(do
+       (var ,start 0)
+       (var ,end (length ,arr))
+       (var ,mid (brshift ,end 1))
+       (while (not= ,mid ,end)
+         (if (,<? (in ,arr ,mid) ,x)
+           (set ,mid (brshift (+ (set ,start ,mid) ,end 1) 1))
+           (set ,mid (brshift (+ ,start (set ,end ,mid)) 1))))
+       ,mid)))
+
+(defmacro binary-search-by
+  ``Returns the index of `x` in an array or tuple which has been sorted
+  by a mapping function `f`, or the index of the next item if `x` is not
+  present. This is the correct insert index for `x` within `arr`.``
+  [x arr f]
+  (with-syms [start end mid val]
+    ~(do
+       (var ,start 0)
+       (var ,end (length ,arr))
+       (var ,mid (brshift ,end 1))
+       (def ,val (,f ,x))
+       (while (not= ,mid ,end)
+         (if (< (,f (in ,arr ,mid)) ,val)
+           (set ,mid (brshift (+ (set ,start ,mid) ,end 1) 1))
+           (set ,mid (brshift (+ ,start (set ,end ,mid)) 1))))
+       ,mid)))
+
 (defn insert-sorted
   ```
   Insert elements in `arr` such that it remains sorted by the comparator. If
@@ -462,24 +509,18 @@
   ```
   [arr <? & xs]
   (each x xs
-    (array/insert
-      arr
-      (or (find-index (partial <? x) arr) -1)
-      x))
+    (array/insert arr (binary-search x arr <?) x))
   arr)
 
 (defn insert-sorted-by
   ```
   Insert elements in `arr` such that it remains sorted by the value returned
-  when `f` is called with the element, comparing the values with <. If `arr` is
+  when `f` is called with the element, comparing the values with `<`. If `arr` is
   not sorted beforehand, the results are undefined. Returns `arr`.
   ```
   [arr f & xs]
   (each x xs
-    (array/insert
-      arr
-      (or (find-index |(< (f x) (f $)) arr) -1)
-      x))
+    (array/insert arr (binary-search-by x arr f) x))
   arr)
 
 (def- id-bytes 10)

@@ -17,7 +17,7 @@
       :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<?=>@^_"))
       :token (some :symchars)
       :hex (range "09" "af" "AF")
-      :escape (* "\\" (+ (set "ntrzfev0\"\\")
+      :escape (* "\\" (+ (set "ntrzfev0ab'?\"\\")
                          (* "x" :hex :hex)
                          (* "u" :hex :hex :hex :hex)
                          (* "U" :hex :hex :hex :hex :hex :hex)
@@ -77,6 +77,11 @@
       node)
     node))
 
+(defdyn *user-indent-2-forms*
+  "A user list of forms that are control forms and should be indented two spaces.")
+
+(defn- user-indent-2-forms [] (invert (or (dyn *user-indent-2-forms*) [])))
+
 (def- indent-2-forms
   "A list of forms that are control forms and should be indented two spaces."
   (invert ["fn" "match" "with" "with-dyns" "def" "def-" "var" "var-" "defn" "defn-"
@@ -99,7 +104,8 @@
       (= "\n" (get items 1)) true
       (not= tag :span) nil
       (in indent-2-forms body) true
-      (peg/match indent-2-peg body) true)))
+      (peg/match indent-2-peg body) true
+      (in (user-indent-2-forms) body) true)))
 
 (defn- fmt
   "Emit formatted."
@@ -137,7 +143,7 @@
     [xs]
     (emit "(")
     (def len (length xs))
-    (when (pos? len) 
+    (when (pos? len)
       (fmt-1-recur (xs 0))
       (indent 1)
       (for i 1 len (fmt-1-recur (xs i)))

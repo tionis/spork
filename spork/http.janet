@@ -63,7 +63,9 @@
              :error))
       (break))
     (set last-index (max 0 (- (length buf) 4)))
-    (ev/read conn chunk-size buf))
+    (unless (ev/read conn chunk-size buf)
+      (set head :error)
+      (break)))
   head)
 
 (defn- query-string-accum
@@ -110,6 +112,7 @@
   stored in `:buffer.`"
   [conn buf &opt no-query]
   (def head (read-header conn buf request-peg :method :path))
+  (if (= :error head) (break head))
 
   # Parse query string separately
   (unless no-query
@@ -238,7 +241,8 @@
     (break pos))
   (prompt :exit
     (forever
-      (ev/read conn 1 buf)
+      (unless (ev/read conn 1 buf)
+        (error "end of stream"))
       (when-let [pos (peg/find needle buf start-index)]
         (return :exit pos)))))
 
@@ -288,7 +292,8 @@
         # from the socket directly.
         (do
           (ev/chunk conn chunk-length body)
-          (ev/read conn 2 buf) # trailing CRLF (not included in chunk length proper)
+          (unless (ev/read conn 2 buf) # trailing CRLF (not included in chunk length proper)
+            (error "end of stream"))
           # Clear buffer out. We ain't gonna need it no more.
           (buffer/clear buf)
           (set i 0))
@@ -424,7 +429,7 @@
     (def response (handler req))
 
     # Now send back response
-    (send-response conn response (buffer/clear buf))))
+    (send-response conn response @"")))
 
 (defn server
   "Makes a simple http server. By default it binds to 0.0.0.0:8000,
@@ -446,7 +451,7 @@
   ~{:main (* :protocol :fqdn :port :path)
     :protocol "http://" # currently no https support
     :fqdn '(some (range "az" "AZ" "09" ".." "--"))
-    :port (+ (* ":" ':d+) (constant 80))
+    :port (+ (* ":" ':d+) (constant "80"))
     :path-chr (range "az" "AZ" "09" "!!" "$9" ":;" "==" "?@" "~~" "__")
     :path (+ '(some :path-chr) (constant "/"))})
 
@@ -457,7 +462,7 @@
 
 (defn request
   "Make an HTTP request to a server.
-  Returns a table contain response information.
+  Returns a table containing response information.
   * `:head-size` - number of bytes in the http header
   * `:headers` - table mapping header names to header values. Header names are lowercase.
   * `:connection` - the connection stream for the header.
@@ -472,7 +477,7 @@
   (assert x (string "invalid url: " url))
   (def [host port path] x)
   (def buf @"")
-  (buffer/format buf "%s %s HTTP/1.1\r\nHost: %s:%v\r\n" method path host port)
+  (buffer/format buf "%s %s HTTP/1.1\r\nHost: %s:%s\r\n" method path host port)
   (when headers
     (eachp [k v] headers
       (buffer/format buf "%s: %s\r\n" k v)))

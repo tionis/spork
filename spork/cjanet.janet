@@ -18,12 +18,12 @@
       :main (% (* :one (any (+ ':d :one))))}))
 
 (def- bops
- {'+ '+ '- '- '* '* '/ '/ '% '% '< '<
-  '> '> '<= '<= '>= '>= '== '== '!= '!=
-  'not= "!="
-  '>> ">>" '<< "<<" '&& "&&" '^ "^"
-  'and "&&" 'or "||" 'band "&" 'bor "|" 'bxor "^" 'set "="
-  'blshift "<<" 'brshift ">>"})
+  {'+ '+ '- '- '* '* '/ '/ '% '% '< '<
+   '> '> '<= '<= '>= '>= '== '== '!= '!=
+   'not= "!="
+   '>> ">>" '<< "<<" '&& "&&" '^ "^"
+   'and "&&" 'or "||" 'band "&" 'bor "|" 'bxor "^" 'set "="
+   'blshift "<<" 'brshift ">>"})
 
 (def- uops {'bnot "~" 'not "!" 'neg "-" '! "!" '++ "++" '-- "--"})
 
@@ -195,7 +195,7 @@
       (errorf "unexpected type form %v" definition))
     (errorf "unexpected type form %v" definition)))
 
-(defn- emit-typedef
+(defn- emit-typedef-impl
   [alias definition]
   (prin "typedef ")
   (emit-type definition alias)
@@ -281,12 +281,14 @@
 (defn- emit-array-ctor
   [args]
   (var is-first true)
-  (prin "{")
+  (emit-block-start)
   (each x args
-    (if-not is-first (prin ", "))
+    (if-not is-first (print ", "))
     (set is-first false)
+    (emit-indent)
     (emit-expression x true))
-  (prin "}"))
+  (print)
+  (emit-block-end))
 
 (varfn emit-expression
   [form &opt noparen]
@@ -344,8 +346,12 @@
 
 # Blocks
 
-(defn- emit-do
+(defn emit-blocks
+  "Emit a number of statements in a bracketed block"
   [statements]
+  (when (one? (length statements))
+    (emit-block (get statements 0))
+    (break))
   (emit-indent)
   (emit-block-start)
   (each s statements
@@ -378,9 +384,7 @@
   (prin "while (")
   (emit-expression condition true)
   (prin ") ")
-  (if (empty? body)
-    (emit-block stm)
-    (emit-do [stm ;body]))
+  (emit-blocks [stm ;body])
   (print))
 
 (defn- case-literal? [x] (or (symbol? x) (and (number? x) (= x (math/floor x)))))
@@ -420,9 +424,7 @@
   (prin "; ")
   (emit-expression step true)
   (prin ") ")
-  (if (empty? body)
-    (emit-block body)
-    (emit-do [body ;body]))
+  (emit-blocks body)
   (print))
 
 (defn- emit-return
@@ -437,7 +439,7 @@
   (unless nobracket
     (emit-block-start))
   (match form
-    ['do & body] (emit-do body)
+    ['do & body] (emit-blocks body)
     ['while cond stm & body] (emit-while cond stm body)
     ['for [init cond step] & body] (emit-for init cond step body)
     ['switch cond & body] (emit-switch cond body)
@@ -458,7 +460,7 @@
   (each class classes
     (prin class " ")))
 
-(defn- emit-function
+(defn- emit-function-impl
   [docstring classes name arglist rtype body]
   (print)
   (emit-comment docstring)
@@ -475,14 +477,19 @@
   (if (empty? body)
     (print ";")
     (do
-      (prin " ")
-      (emit-do body))))
+      (print)
+      (emit-blocks body))))
 
-(defn- do-directive
+(defn emit-preprocess
+  ```
+  Emit a line of source code for the pre-processor.
+  For example `(emit-preprocess "include" "<stdio.h>")`.
+  ```
   [& args]
   (print "#" (string/join (map string args) " ")))
 
-(defn- do-function
+(defn emit-function
+  "Emit a C function definition."
   [name & form]
   (def i (index-of '-> form))
   (assert i "invalid function prototype - expected -> before return type")
@@ -497,46 +504,51 @@
       :string (buffer/push docstring meta)
       (errorf "cannot handle metadata %v - expected keyword, symbol, or string." meta)))
   (def body (tuple/slice form (+ 2 i)))
-  (emit-function docstring classes name arglist ret-type body))
+  (emit-function-impl docstring classes name arglist ret-type body))
 
-(defn- do-declare
+(defn emit-declare
+  "Emit a declaration of a variable or constant."
   [binding & form]
-  (def storage-classes (slice form 0 -2))
+  (def storage-classes (slice form 0 (dec (length form))))
   (def v (last form))
   (when (next storage-classes)
     (emit-storage-classes storage-classes))
   (emit-declaration binding v)
   (print ";"))
 
-(defn- do-typedef
-  [n d]
+(defn emit-typedef
+  "Emit a type declaration (C typedef)."
+  [name definition]
   (print)
-  (emit-typedef n d))
+  (emit-typedef-impl name definition))
+
+(defn emit-include
+  [path]
+  (emit-preprocess :include path))
+
+###
+### Top-Level code emitting macros (wrappers around emit-* functions). The macro
+### forms quasiquote arguments to make templating easier.
+###
 
 (defn- qq-wrap
   [args]
   (map (fn [x] ['quasiquote x]) args))
 
-###
-### Top-Level code emitting macros
-###
-
-(defmacro function [& args] ~(,do-function ,;(qq-wrap args)))
-(defmacro preprocess [& args] ~(,do-directive ,;(qq-wrap args)))
-(defmacro @ [& args] ~(,do-directive ,;(qq-wrap args)))
-(defmacro declare [& args] ~(,do-declare ,;(qq-wrap args)))
-(defmacro typedef [& args] ~(,do-typedef ,;(qq-wrap args)))
-(defmacro block [& args] ~(,emit-do ,(qq-wrap args)))
+(defmacro function [& args] ~(,emit-function ,;(qq-wrap args)))
+(defmacro preprocess [& args] ~(,emit-preprocess ,;(qq-wrap args)))
+(defmacro @ [& args] ~(,emit-preprocess ,;(qq-wrap args)))
+(defmacro declare [& args] ~(,emit-declare ,;(qq-wrap args)))
+(defmacro typedef [& args] ~(,emit-typedef ,;(qq-wrap args)))
+(defmacro block [& args] ~(,emit-blocks ,(qq-wrap args)))
+(defmacro include [path] ~(,emit-include ,;(qq-wrap [path])))
 
 ###
 ### Janet <-> C glue utilities
 ###
 
-(defmacro include
-  [path]
-  ~(as-macro ,preprocess include ,path))
-
 (defdyn *cfun-list* "Array of C Functions defined in the current scope")
+(defdyn *cdef-list* "Array of C Constants defined in the current scope")
 
 (defn- wrap-v
   "Generate code to wrap any Janet (constant) literal"
@@ -665,9 +677,9 @@
   (array/push param-names v)
   (array/push cparams [v (get type-alias-to-ctype (keyword T) '(* void))])
   (case (keyword T)
-    :value ~(def (,v Janet) (? (> argc n) (aref ,argv ,n) ,(wrap-v dflt)))
-    :any ~(def (,v Janet) (? (> argc n) (aref ,argv ,n) ,(wrap-v dflt)))
-    :Janet ~(def (,v Janet) (? (> argc n) (aref ,argv ,n) ,(wrap-v dflt)))
+    :value ~(def (,v Janet) (? (> argc ,n) (aref ,argv ,n) ,(wrap-v dflt)))
+    :any ~(def (,v Janet) (? (> argc ,n) (aref ,argv ,n) ,(wrap-v dflt)))
+    :Janet ~(def (,v Janet) (? (> argc ,n) (aref ,argv ,n) ,(wrap-v dflt)))
     :number ~(def (,v double) (janet_optnumber ,argv ,argc ,n ,dflt))
     :double ~(def (,v double) (janet_optnumber ,argv ,argc ,n ,dflt))
     :float ~(def (,v float) (janet_optnumber ,argv ,argc ,n ,dflt))
@@ -687,12 +699,9 @@
     (do
       ~(def (,v (* void)) (janet_optabstract ,argv ,argc ,n ,T ,dflt)))))
 
-(defmacro cfunction
+(defn emit-cfunction
   ```
-  Define a C Function in cjanet. This also takes care
-  of recording docstrings and such. Arity checking will be
-  generated for you (by insertion of a call to janet_arity
-  or janet_fixarity).
+  Functional form of `cfunction` - takes the same arguments, but parameters must be manually quoted.
   ```
   [name & more]
   (def mangledname (symbol (mangle name)))
@@ -740,28 +749,66 @@
   (def max-arity (if (or amp-index named-index keys-index) -1 pcount))
   (buffer/push signature ")")
   # Generate function for use in C
-  (emit-function docstring classes mangledname cparams (get type-alias-to-ctype (keyword ret-type))
+  (emit-function-impl docstring classes mangledname cparams (get type-alias-to-ctype (keyword ret-type))
                  (eval (qq-wrap body)))
   # Generate wrapper for use in Janet
   (def cfun_name (mangle (string "_generated_cfunction_" mangledname)))
-  (prin
-    "\nJANET_FN(" cfun_name ", "
-    (string/format "%j" (string signature)) ", "
-    (string/format "%j" (string docstring)) ") ")
+  (print "\nJANET_FN(" cfun_name ",")
+  (print "        " (string/format "%j" (string signature)) ", ")
+  (print "        " (string/format "%j" (string docstring)) ")")
   (block
     ,(if (= min-arity max-arity)
-      ~(janet_fixarity argc ,min-arity)
-      ~(janet_arity argc ,min-arity ,max-arity))
+       ~(janet_fixarity argc ,min-arity)
+       ~(janet_arity argc ,min-arity ,max-arity))
     ,;argument-parsing
     (return ,(return-wrap ret-type [mangledname ;param-names])))
   (array/push cfun-list ~(JANET_REG ,(string name) ,(symbol cfun_name)))
   cfun_name)
 
-(defmacro module-entry
+(defmacro cfunction
+  ```
+  Define a C Function in cjanet. This also takes care
+  of recording docstrings and such. Arity checking will be
+  generated for you (by insertion of a call to janet_arity
+  or janet_fixarity).
+  ```
+  [name & more]
+  (emit-cfunction name ;more))
+
+(defn emit-cdef
+  ```
+  Define constant which will be registered in the module.
+  It takes care of the docstring.
+  ```
+  [name & more]
+  (def [docstr body]
+    (if-let [ds (and (string? (more 0)) (more 0))
+             bo (more 1)]
+      [ds bo] [name (more 1)]))
+  (def cdef-list (if-let [x (dyn *cdef-list*)] x (setdyn *cdef-list* @[])))
+  (array/push cdef-list ~(janet_def env ,(string name) ,body ,docstr))
+  nil)
+
+(defmacro cdef
+  ```
+  Define constant which will be registered in the module.
+  It takes care of the docstring.
+  ```
+  [name & more]
+  (emit-cdef name ;more))
+
+(defn emit-module-entry
   "Call this at the end of a cjanet module to add a module entry function."
   [name]
   (def all-cfuns (dyn *cfun-list* @[]))
+  (def all-cdefs (dyn *cdef-list* @[]))
   (prin "\nJANET_MODULE_ENTRY(JanetTable *env) ")
   (block
+    ,;all-cdefs
     (def (cfuns (array JanetRegExt)) (array ,;all-cfuns JANET_REG_END))
     (janet_cfuns_ext env ,name cfuns)))
+
+(defmacro module-entry
+  "Call this at the end of a cjanet module to add a module entry function."
+  [name]
+  (emit-module-entry name))
